@@ -70,9 +70,12 @@ struct RelayerConfig {
     arbitrum_rpc: String,
     source_contract: Address,
     dest_contract: Address,
-    private_key: String,
+    relayer_private_key: String,
+    relayer_public_address: String,
     eth_start_block: u64,
     arb_start_block: u64,
+    eth_sep_contract_abi: String,
+    arb_sep_contract_abi: String,
     confirmation_blocks: u64,
 }
 
@@ -125,13 +128,62 @@ struct MessageRelayer {
 //     Ok(())
 // }
 
+
+    // async fn handle_message(&self, message: Message) -> Result<()> {
+    //     // Check if message was already processed
+    //     {
+    //         let processed = self.processed_messages.read().await;
+    //         if processed.contains(&message.message_id) {
+    //             log::info!("Message {} already processed", message.message_id);
+    //             return Ok(());
+    //         }
+    //     }
+
+    //     // Verify the message
+    //     if !self.verify_message(&message).await? {
+    //         log::error!("Message verification failed for {}", message.message_id);
+    //         return Ok(());
+    //     }
+
+    //     // Implement retry logic with exponential backoff
+    //     let mut retry_count = 0;
+    //     let max_retries = 5;
+        
+    //     while retry_count < max_retries {
+    //         match self.relay_message(&message).await {
+    //             Ok(_) => {
+    //                 // Mark message as processed
+    //                 let mut processed = self.processed_messages.write().await;
+    //                 processed.insert(message.message_id);
+    //                 log::info!("Successfully relayed message {}", message.message_id);
+    //                 return Ok(());
+    //             }
+    //             Err(e) => {
+    //                 retry_count += 1;
+    //                 let delay = Duration::from_secs(2u64.pow(retry_count));
+    //                 log::warn!(
+    //                     "Relay attempt {} failed for message {}: {:?}. Retrying in {:?}",
+    //                     retry_count,
+    //                     message.message_id,
+    //                     e,
+    //                     delay
+    //                 );
+    //                 time::sleep(delay).await;
+    //             }
+    //         }
+    //     }
+
+    //     log::error!("Failed to relay message {} after {} attempts", message.message_id, max_retries);
+    //     Ok(())
+    // }
+
 async fn read_from_keystore() -> Result<EthereumWallet> {
     // Password to decrypt the keystore file with.
     let password = env::var("RELAYER_PASSWORD")?;
-    let pathOfKeyStore = env::var("RELAYER_KEYSTORE_PATH")?;
-    let keystoreFileName = env::var("RELAYER_KEYSTORE_NAME")?;
+    let path_of_keystore = env::var("RELAYER_KEYSTORE_PATH")?;
+    let keystore_filename = env::var("RELAYER_KEYSTORE_NAME")?;
     
-    let keystore_file_path = PathBuf::from(pathOfKeyStore).join(keystoreFileName);
+    let keystore_file_path = PathBuf::from(path_of_keystore).join(keystore_filename);
 
     let signer = LocalSigner::decrypt_keystore(keystore_file_path, password)?;
     let wallet = EthereumWallet::from(signer);
@@ -170,19 +222,19 @@ impl MessageRelayer {
 
     async fn start(&self) -> Result<()> {
         // Concurrent task spawning
-        let process_events = self.process_events();
+        let process_eth_sep_events = self.process_eth_sep_events();
         // let health_check = self.health_check();
-        // let process_receiver_events = self.process_receiver_events();
+        let process_arb_sep_events = self.process_arb_sep_events();
 
         println!("::::: STARTING PROCESSES :::::");
         // Run all tasks concurrently
-        tokio::try_join!(process_events)?;
+        tokio::try_join!(process_eth_sep_events, process_arb_sep_events)?;
 
         Ok(())
     }
 
-    async fn process_events(&self) -> Result<()> {
-
+    async fn process_eth_sep_events(&self) -> Result<()> {
+        println!("::::: LISTENING TO SEPOLIA :::::");
         let sender_address = self.config.source_contract;
         
         // Create filter for MessageSent events
@@ -195,26 +247,28 @@ impl MessageRelayer {
         let mut stream = sub.into_stream();
 
         while let Some(log) = stream.next().await {
+            println!("{log:?}");
             let decoded_event = MessageSent::decode_log(&log.inner, false).unwrap();
             let decoded_message = from_utf8(&decoded_event.data.message).unwrap().to_string();
             let decoded_message_id = &decoded_event.data.messageId;
             let decoded_message_address = &decoded_event.data.sender;
             let decoded_message_timestamp= &decoded_event.data.timestamp;
-            println!("Message ID:: {:?}", decoded_message_id.clone());
+
             let msg: Message = Message {
                 sender: *decoded_message_address,
                 message_id: *decoded_message_id,
                 message: decoded_message,
                 timestamp: *decoded_message_timestamp
             };
-            self.relay_message(&msg).await?;
+
+            self.relay_eth_sep_to_arb_sep_message(&msg).await?;
         }
         println!("Message Relayed!");
         Ok(())
     }
 
-    async fn process_receiver_events(&self) -> Result<()> {
-
+    async fn process_arb_sep_events(&self) -> Result<()> {
+        println!("::::: LISTENING TO ARBITRUM SEPOLIA :::::");
         let receiver_address = self.config.dest_contract;
 
         // Create filter for MessageSent events
@@ -240,57 +294,10 @@ impl MessageRelayer {
                 message: decoded_message,
                 timestamp: *decoded_message_timestamp
             };
-            self.relay_ack_message(&msg).await?;
+
+            self.relay_arb_sep_to_eth_sep_message(&msg).await?;
         }
         
-        Ok(())
-    }
-
-    async fn handle_message(&self, message: Message) -> Result<()> {
-        // Check if message was already processed
-        {
-            let processed = self.processed_messages.read().await;
-            if processed.contains(&message.message_id) {
-                log::info!("Message {} already processed", message.message_id);
-                return Ok(());
-            }
-        }
-
-        // Verify the message
-        if !self.verify_message(&message).await? {
-            log::error!("Message verification failed for {}", message.message_id);
-            return Ok(());
-        }
-
-        // Implement retry logic with exponential backoff
-        let mut retry_count = 0;
-        let max_retries = 5;
-        
-        while retry_count < max_retries {
-            match self.relay_message(&message).await {
-                Ok(_) => {
-                    // Mark message as processed
-                    let mut processed = self.processed_messages.write().await;
-                    processed.insert(message.message_id);
-                    log::info!("Successfully relayed message {}", message.message_id);
-                    return Ok(());
-                }
-                Err(e) => {
-                    retry_count += 1;
-                    let delay = Duration::from_secs(2u64.pow(retry_count));
-                    log::warn!(
-                        "Relay attempt {} failed for message {}: {:?}. Retrying in {:?}",
-                        retry_count,
-                        message.message_id,
-                        e,
-                        delay
-                    );
-                    time::sleep(delay).await;
-                }
-            }
-        }
-
-        log::error!("Failed to relay message {} after {} attempts", message.message_id, max_retries);
         Ok(())
     }
 
@@ -331,34 +338,10 @@ impl MessageRelayer {
         Ok(true)
     }
 
-    async fn relay_ack_message(&self, message: &Message) -> Result<()> {
-        let path = PathBuf::from("./contracts/abi/MessengeSender.json");
+    async fn relay_arb_sep_to_eth_sep_message(&self, message: &Message) -> Result<()> {
+        let path = PathBuf::from(&self.config.eth_sep_contract_abi);
 
-        let address_string = "0xA014Ca018A22f96D00B920410834Bb1504B183E1";
-        let wallet_address = Address::parse_checksummed(address_string, None).expect("Invalid address");
-        
-        let artifact = std::fs::read(path).expect("Failed to read artifact");
-        let json: serde_json::Value = serde_json::from_slice(&artifact)?;
-
-        let abi_value = json.get("abi").expect("Failed to get ABI from artifact");
-        let abi = serde_json::from_str(&abi_value.to_string())?;
-
-        let contract = ContractInstance::new(self.config.dest_contract, self.arbitrum_provider.clone(), Interface::new(abi));
-
-        let message_id = DynSolValue::FixedBytes(message.message_id, 32);
-
-        let tx_hash = contract.function("ackMessage", &[message_id])?.from(wallet_address).send().await?.watch().await?;
-
-        println!("Tx_hash : {tx_hash}");
-
-        Ok(())
-    }
-
-    async fn relay_message(&self, message: &Message) -> Result<()> {
-        let path = PathBuf::from("./contracts/abi/MessengeReceiver.json");
-
-        // If you have a hex string with "0x" prefix
-        let address_string = &env::var("RELAYER_PUBLIC_ADDRESS")?;
+        let address_string = &self.config.relayer_public_address;
         let wallet_address = Address::parse_checksummed(address_string, None).expect("Invalid address");
         
         let artifact = std::fs::read(path).expect("Failed to read artifact");
@@ -370,9 +353,35 @@ impl MessageRelayer {
         let contract = ContractInstance::new(self.config.source_contract, self.ethereum_provider.clone(), Interface::new(abi));
 
         let message_id = DynSolValue::FixedBytes(message.message_id, 32);
+
+        println!("::::: INITATING ETH SEPOLIA CALL :::::");
+        let tx_hash = contract.function("ackMessage", &[message_id])?.from(wallet_address).send().await?.watch().await?;
+
+        println!("Tx_hash : {tx_hash}");
+
+        Ok(())
+    }
+
+    // This function is to relay messages to arbitrum sepolia testnet. So use, arbitrum based config params.
+    async fn relay_eth_sep_to_arb_sep_message(&self, message: &Message) -> Result<()> {
+        let path = PathBuf::from(&self.config.arb_sep_contract_abi);
+
+        // If you have a hex string with "0x" prefix
+        let address_string = &self.config.relayer_public_address;
+        let wallet_address = Address::parse_checksummed(address_string, None).expect("Invalid address");
+        
+        let artifact = std::fs::read(path).expect("Failed to read artifact");
+        let json: serde_json::Value = serde_json::from_slice(&artifact)?;
+
+        let abi_value = json.get("abi").expect("Failed to get ABI from artifact");
+        let abi = serde_json::from_str(&abi_value.to_string())?;
+
+        let contract = ContractInstance::new(self.config.dest_contract, self.arbitrum_provider.clone(), Interface::new(abi));
+
+        let message_id = DynSolValue::FixedBytes(message.message_id, 32);
         let sender = DynSolValue::Address(message.sender);
         let timestamp = DynSolValue::from(message.timestamp);
-
+        println!("::::: INITATING ARBITRUM CALL :::::");
         let tx_hash = contract.function("receiveMessage", &[message_id, sender, timestamp])?.from(wallet_address).send().await?.watch().await?;
 
         println!("Tx_hash : {tx_hash}");
@@ -413,10 +422,13 @@ async fn main() -> Result<()> {
         arbitrum_rpc: env::var("ARBITRUM_RPC")?,
         source_contract: Address::from_str(&env::var("ETH_SEP_CONTRACT_ADDRESS")?)?,
         dest_contract: Address::from_str(&env::var("ARB_SEP_CONTRACT_ADDRESS")?)?,
-        private_key: env::var("RELAYER_PRIVATE_KEY")?,
+        relayer_private_key: env::var("RELAYER_PRIVATE_KEY")?,
+        relayer_public_address: env::var("RELAYER_PUBLIC_ADDRESS")?,
         eth_start_block: env::var("ETH_SEP_START_BLOCK")?.parse()?,
         arb_start_block: env::var("ARB_SEP_START_BLOCK")?.parse()?,
         confirmation_blocks: env::var("CONFIRMATION_BLOCKS")?.parse()?,
+        eth_sep_contract_abi: env::var("ETH_SEP_CONTRACT_ABI")?.parse()?,
+        arb_sep_contract_abi: env::var("ARB_SEP_CONTRACT_ABI")?.parse()?
     };
 
     // Create and start the relayer
@@ -432,21 +444,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_log_variable_generation() {
+    fn test_log_variable_generation_sepolia() {
+        // sample log
+        // Log { inner: Log { address: 0x9a0e49c625f5a0dc02a5c16d68e431722789a6c2, data: LogData { topics: [0x4bac9e82130c606f1d88edf9a3046ffd43931f3ef54e0e1feaabbd669757b98f, 0x03ee542079f34b37686142e3767f846c5e19340839e6e2e977af37e1f9f90135, 0x000000000000000000000000a014ca018a22f96d00b920410834bb1504b183e1], data: 0x00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000067b9b57400000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000353594e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 } }, block_hash: Some(0xdebe7a60464ff6ff992c194e9891201a628bc86a3939a29aeedff6a4ca6054be), block_number: Some(7761468), block_timestamp: None, transaction_hash: Some(0x65ccf2557d1cfc2aa11b073c87522894b8dec0e7941fd9710097431a951c18c1), transaction_index: Some(138), log_index: Some(143), removed: false }
         let log = Log {
             inner: ETHLog {
-                address: "0x9c4928a42fd336ee3eb4ec853fc03a8d23ae7904".parse().unwrap(),
+                address: "0x9a0e49c625f5a0dc02a5c16d68e431722789a6c2".parse().unwrap(),
                 data: LogData::new_unchecked(
                     vec![
-                        "0xa9a06dcba5a4df240787afa75951f29bdd29d4229886487360b3d0f13d56a444".parse().unwrap(),
-                        "0x0826a3ac8b3c61afe884bfcada224a4f44fd83517a48284b812d9867d721c81c".parse().unwrap(),
+                        "0x4bac9e82130c606f1d88edf9a3046ffd43931f3ef54e0e1feaabbd669757b98f".parse().unwrap(),
+                        "0x03ee542079f34b37686142e3767f846c5e19340839e6e2e977af37e1f9f90135".parse().unwrap(),
                         "0x000000000000000000000000a014ca018a22f96d00b920410834bb1504b183e1".parse().unwrap(),
                     ],
                     // Corrected hexadecimal string (even length)
-                    "0x00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000067aee3a800000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000353594e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".parse().unwrap(),
+                    "0x00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000067b9b57400000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000353594e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".parse().unwrap(),
                 ),
             },
-            block_hash: Some("0xdb2852c4fa133255db6b9a4d519f073d2779d48c6816de59365636602408d073".parse().unwrap()),
+            block_hash: Some("0xdebe7a60464ff6ff992c194e9891201a628bc86a3939a29aeedff6a4ca6054be".parse().unwrap()),
             block_number: Some(7704169 as u64),
             block_timestamp: None,
             transaction_hash: Some("0x88d038ba62297a2ad5d7a55ec29443aaf7eaf114e0b21721eab73bb724e088d6".parse().unwrap()),
@@ -465,5 +479,10 @@ mod tests {
         // let message_decoded_bytes = justHex::decode(decoded.data.message).unwrap();
         // let message_decoded_string = from_utf8(&message_decoded_bytes).unwrap();
         // println!("{:?}", message_decoded_string);
+    }
+
+    #[test]
+    fn test_log_variable_arb_sep_to_eth_sep() {
+        // Log { inner: Log { address: 0x6d9af71a08d8431c1a643c5ff8cd1bd2faedbc15, data: LogData { topics: [0xfbe5334ea625e76d101c05d3a8561b00ba7037610c6e918747d242d688c25a8d, 0x6767794f4c000000000000000000000000000000000000000000000000000000, 0x000000000000000000000000a014ca018a22f96d00b920410834bb1504b183e1], data: 0x00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000067b9b91d000000000000000000000000000000000000000000000000000000000000000341434b0000000000000000000000000000000000000000000000000000000000 } }, block_hash: Some(0xee9a111cdd5a95ae215f37c9fad8fa6101ada47ceca2be48bdd5ed4c14aaf7ef), block_number: Some(126215492), block_timestamp: None, transaction_hash: Some(0xe5f3297e15af50b5ca3b9170cbd7c61a38b905b77a5a3bf9c80935ed8487650a), transaction_index: Some(1), log_index: Some(0), removed: false }
     }
 }

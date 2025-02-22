@@ -37,10 +37,10 @@ async function main() {
     // console.log(`Trusted Relayer Address: ${trustedRelayer}`);
 
     // Ensure the signer is the trusted relayer
-    if (signer.address != trustedRelayerAddress) {
-        console.error("Signer is not the trusted relayer");
-        return;
-    }
+    // if (signer.address != trustedRelayerAddress) {
+    //     console.error("Signer is not the trusted relayer");
+    //     return;
+    // }
 
     console.log({messageId});
     // Call the receiveMessage function
