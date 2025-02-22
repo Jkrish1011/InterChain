@@ -1,0 +1,43 @@
+[package]
+name = "relayer-node"
+version = "0.1.0"
+edition = "2021"
+authors = ["Jayakrishnan Ashok <jayakrishnanashok@gmail.com>"]
+description = "A cross-chain message relayer between Ethereum and Arbitrum"
+
+[dependencies]
+
+# Alloy features
+alloy = { version = "0.11.0", features = ["full", "signer-keystore"] }
+
+# Async runtime
+tokio = { version = "1.28", features = ["full"] }
+
+# Error handling
+eyre = "0.6"
+
+# tempfile = "3.14"
+rand = "0.8"
+# Logging
+log = "0.4"
+env_logger = "0.10"
+futures-util = "0.3"
+
+# Environment variables
+dotenv = "0.15"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Time handling
+chrono = "0.4"
+
+# Async traits
+async-trait = "0.1"
+
+# Other utilities
+futures = "0.3"
+thiserror = "1.0"
+hex = "0.4"
+reqwest = { version = "0.11", features = ["rustls-tls"] }
