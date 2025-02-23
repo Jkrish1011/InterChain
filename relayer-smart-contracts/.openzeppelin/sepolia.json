@@ -1,0 +1,155 @@
+{
+  "manifestVersion": "3.2",
+  "proxies": [
+    {
+      "address": "0x3423EEbF8d3C03b7109ed9c97F946D209aB45358",
+      "txHash": "0x10e5fd3b93cf6475eae3774afd9d32fab7306e612db4a096a4d63838fd43308c",
+      "kind": "transparent"
+    }
+  ],
+  "impls": {
+    "34e316b75ca9d73b89f11bbcb64eddc251f4c5c6d2d20b5796b9005f33a42720": {
+      "address": "0xEFB172C0E0672B2860eD77A6C079F74a4bC2a082",
+      "txHash": "0xcc6c298114ef71137b44a1c305acb7931e99a49cf86f55ff8aa360a8f32bddf7",
+      "layout": {
+        "solcVersion": "0.8.28",
+        "storage": [
+          {
+            "label": "trustedRelayer",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_address",
+            "contract": "MessengeSender",
+            "src": "contracts/MessengeSender.sol:36"
+          },
+          {
+            "label": "nonce",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_uint256",
+            "contract": "MessengeSender",
+            "src": "contracts/MessengeSender.sol:39"
+          },
+          {
+            "label": "messages",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_bytes32,t_struct(Message)395_storage)",
+            "contract": "MessengeSender",
+            "src": "contracts/MessengeSender.sol:51"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)7_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_bytes_storage": {
+            "label": "bytes",
+            "numberOfBytes": "32"
+          },
+          "t_mapping(t_bytes32,t_struct(Message)395_storage)": {
+            "label": "mapping(bytes32 => struct MessengeSender.Message)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(Message)395_storage": {
+            "label": "struct MessengeSender.Message",
+            "members": [
+              {
+                "label": "messageId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "sender",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "message",
+                "type": "t_bytes_storage",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "timestamp",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "signature",
+                "type": "t_bytes_storage",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "processed",
+                "type": "t_bool",
+                "offset": 0,
+                "slot": "5"
+              }
+            ],
+            "numberOfBytes": "192"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

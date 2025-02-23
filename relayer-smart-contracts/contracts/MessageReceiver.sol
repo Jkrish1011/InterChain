@@ -1,7 +1,10 @@
 //SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-contract MessengeReceiver {
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+
+
+contract MessengeReceiver is Initializable {
     // -------------------------------------- EVENTS --------------------------------------
     
     event MessageReceived(
@@ -25,7 +28,11 @@ contract MessengeReceiver {
 
     // -------------------------------------- FUNCTIONS --------------------------------------
 
-    constructor(address _trustedRelayer) {
+    // constructor(address _trustedRelayer) {
+    //     trustedRelayer = _trustedRelayer;
+    // }
+
+    function initialize(address _trustedRelayer) public initializer {
         trustedRelayer = _trustedRelayer;
     }
 

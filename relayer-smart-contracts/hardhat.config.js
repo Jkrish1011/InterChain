@@ -1,4 +1,5 @@
 require("@nomicfoundation/hardhat-toolbox");
+require("@openzeppelin/hardhat-upgrades");
 require('dotenv').config();
 
 const { ALCHEMY_ARBITRUM_SEPOLIA_RPC, ALCHEMY_SEPOLIA_RPC, PRIVATE_KEY_SEPOLIA, PRIVATE_KEY_ARBITRUM } = process.env;

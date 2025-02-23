@@ -1,7 +1,10 @@
 //SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
-contract MessengeSender {
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+
+
+contract MessengeSender is Initializable {
     // -------------------------------------- EVENTS --------------------------------------
 
     // Event to Notify relayer that the message has been initiated.
@@ -55,9 +58,14 @@ contract MessengeSender {
 
     // -------------------------------------- FUNCTIONS --------------------------------------
 
-    constructor(address _trustedRelayer) {
+    // constructor(address _trustedRelayer) {
+    //     trustedRelayer = _trustedRelayer;
+    // }
+
+    function initialize(address _trustedRelayer) public initializer {
         trustedRelayer = _trustedRelayer;
     }
+
 
     // A signature function to cryptographically sign the message to improve the security - TODO
     function createSignature() internal pure returns(bytes memory) {
