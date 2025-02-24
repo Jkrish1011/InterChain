@@ -11,7 +11,9 @@ use alloy::{
 
 use std::str::from_utf8;
 use alloy::sol_types::SolEvent;
-
+use tokio::task::JoinHandle;
+use std::panic;
+use std::future::Future;
 use chrono::format::Fixed;
 use hex as justHex;
 use std::fs::read_to_string;
@@ -26,24 +28,14 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, time};
 use serde::{Deserialize, Serialize};
 
-sol!(
-    #[allow(missing_docs)]
-    #[sol(rpc)]
-    MessageSender,
-    "contracts/abi/MessengeSender.json"
-);
 
-sol!{
+sol! {
     #[derive(Debug)]
-    event MessageSent(
-        bytes32 indexed messageId,
-        address indexed sender,
-        bytes message,
-        uint256 timestamp,
-        bytes signature
-    );
+    contract MessageSender {
+        event MessageSent(bytes32 indexed messageId,address indexed sender,bytes message,uint256 timestamp,bytes signature);
+        event MessageAcknowledged(bytes32 indexed messageId,address indexed sender,bytes message);
+    }
 }
-
 
 sol!{
     #[derive(Debug)]
@@ -129,54 +121,6 @@ struct MessageRelayer {
 // }
 
 
-    // async fn handle_message(&self, message: Message) -> Result<()> {
-    //     // Check if message was already processed
-    //     {
-    //         let processed = self.processed_messages.read().await;
-    //         if processed.contains(&message.message_id) {
-    //             log::info!("Message {} already processed", message.message_id);
-    //             return Ok(());
-    //         }
-    //     }
-
-    //     // Verify the message
-    //     if !self.verify_message(&message).await? {
-    //         log::error!("Message verification failed for {}", message.message_id);
-    //         return Ok(());
-    //     }
-
-    //     // Implement retry logic with exponential backoff
-    //     let mut retry_count = 0;
-    //     let max_retries = 5;
-        
-    //     while retry_count < max_retries {
-    //         match self.relay_message(&message).await {
-    //             Ok(_) => {
-    //                 // Mark message as processed
-    //                 let mut processed = self.processed_messages.write().await;
-    //                 processed.insert(message.message_id);
-    //                 log::info!("Successfully relayed message {}", message.message_id);
-    //                 return Ok(());
-    //             }
-    //             Err(e) => {
-    //                 retry_count += 1;
-    //                 let delay = Duration::from_secs(2u64.pow(retry_count));
-    //                 log::warn!(
-    //                     "Relay attempt {} failed for message {}: {:?}. Retrying in {:?}",
-    //                     retry_count,
-    //                     message.message_id,
-    //                     e,
-    //                     delay
-    //                 );
-    //                 time::sleep(delay).await;
-    //             }
-    //         }
-    //     }
-
-    //     log::error!("Failed to relay message {} after {} attempts", message.message_id, max_retries);
-    //     Ok(())
-    // }
-
 async fn read_from_keystore() -> Result<EthereumWallet> {
     // Password to decrypt the keystore file with.
     let password = env::var("RELAYER_PASSWORD")?;
@@ -220,11 +164,21 @@ impl MessageRelayer {
         })
     }
 
-    async fn start(&self) -> Result<()> {
-        // Concurrent task spawning
-        let process_eth_sep_events = self.process_eth_sep_events();
-        // let health_check = self.health_check();
-        let process_arb_sep_events = self.process_arb_sep_events();
+    async fn start(self: Arc<Self>) -> Result<()> {
+        // Clone the Arc for each task
+        // Clone the Arc for each task
+        let self_clone = Arc::clone(&self);
+
+        // Spawn the task with the cloned Arc
+        let process_eth_sep_events = tokio::spawn(async move {
+            self_clone.process_eth_sep_events_with_recovery().await
+        });
+
+        let self_clone = Arc::clone(&self);
+        
+        let process_arb_sep_events = tokio::spawn(async move {
+            self_clone.process_arb_sep_events_with_recovery().await
+        });
 
         println!("::::: STARTING PROCESSES :::::");
         // Run all tasks concurrently
@@ -233,42 +187,118 @@ impl MessageRelayer {
         Ok(())
     }
 
-    async fn process_eth_sep_events(&self) -> Result<()> {
-        println!("::::: LISTENING TO SEPOLIA :::::");
+    // New method with error recovery for Ethereum Sepolia events
+    async fn process_eth_sep_events_with_recovery(&self) {
+        const RETRY_DELAY: Duration = Duration::from_secs(5);
+        
+        loop {
+            println!("::::: LISTENING TO SEPOLIA :::::");
+            match self.process_eth_sep_events_inner().await {
+                Ok(_) => {
+                    // This shouldn't normally happen as the inner function has an infinite loop
+                    println!("Ethereum Sepolia event processing completed unexpectedly. Restarting...");
+                }
+                Err(err) => {
+                    eprintln!("Error in Ethereum Sepolia event processing: {:?}", err);
+                    println!("Restarting Ethereum Sepolia event processing in {} seconds...", RETRY_DELAY.as_secs());
+                }
+            }
+            
+            // Wait before retrying
+            tokio::time::sleep(RETRY_DELAY).await;
+        }
+    }
+
+    // Inner function with the actual event processing logic for Ethereum Sepolia
+    async fn process_eth_sep_events_inner(&self) -> Result<()> {
         let sender_address = self.config.source_contract;
         
+        let message_sent_topic = MessageSender::MessageSent::SIGNATURE_HASH;
+        let message_acknowledged_topic = MessageSender::MessageAcknowledged::SIGNATURE_HASH;
+
         // Create filter for MessageSent events
         let filter = Filter::new()
                     .address(sender_address)
                     .from_block(self.config.eth_start_block);
 
         let sub = self.ethereum_provider.subscribe_logs(&filter).await?;
-
         let mut stream = sub.into_stream();
 
         while let Some(log) = stream.next().await {
             println!("{log:?}");
-            let decoded_event = MessageSent::decode_log(&log.inner, false).unwrap();
-            let decoded_message = from_utf8(&decoded_event.data.message).unwrap().to_string();
-            let decoded_message_id = &decoded_event.data.messageId;
-            let decoded_message_address = &decoded_event.data.sender;
-            let decoded_message_timestamp= &decoded_event.data.timestamp;
+            
+            // Use match instead of if/else for better error handling
+            match log.topics().get(0) {
+                Some(topic) if *topic == message_sent_topic => {
+                    match MessageSender::MessageSent::decode_log(&log.inner, false) {
+                        Ok(decoded_event) => {
+                            match from_utf8(&decoded_event.data.message) {
+                                Ok(decoded_message_str) => {
+                                    let msg: Message = Message {
+                                        sender: decoded_event.data.sender,
+                                        message_id: decoded_event.data.messageId,
+                                        message: decoded_message_str.to_string(),
+                                        timestamp: decoded_event.data.timestamp
+                                    };
 
-            let msg: Message = Message {
-                sender: *decoded_message_address,
-                message_id: *decoded_message_id,
-                message: decoded_message,
-                timestamp: *decoded_message_timestamp
-            };
-
-            self.relay_eth_sep_to_arb_sep_message(&msg).await?;
+                                    if let Err(err) = self.relay_eth_sep_to_arb_sep_message(&msg).await {
+                                        eprintln!("Error relaying message from ETH to ARB: {:?}", err);
+                                        // Continue processing instead of returning the error
+                                    } else {
+                                        println!("Message Relayed from ETH to ARB successfully!");
+                                    }
+                                },
+                                Err(err) => eprintln!("Error decoding message content: {:?}", err)
+                            }
+                        },
+                        Err(err) => eprintln!("Error decoding MessageSent event: {:?}", err)
+                    }
+                },
+                Some(topic) if *topic == message_acknowledged_topic => {
+                    match MessageSender::MessageAcknowledged::decode_log(&log.inner, false) {
+                        Ok(decoded_event) => {
+                            match from_utf8(&decoded_event.data.message) {
+                                Ok(decoded_message_str) => {
+                                    println!("Message Acknowledged: {}", decoded_message_str);
+                                    // Process acknowledgment if needed
+                                },
+                                Err(err) => eprintln!("Error decoding acknowledged message content: {:?}", err)
+                            }
+                        },
+                        Err(err) => eprintln!("Error decoding MessageAcknowledged event: {:?}", err)
+                    }
+                },
+                _ => eprintln!("Unknown event topic")
+            }
         }
-        println!("Message Relayed!");
+        
         Ok(())
     }
 
-    async fn process_arb_sep_events(&self) -> Result<()> {
-        println!("::::: LISTENING TO ARBITRUM SEPOLIA :::::");
+    // New method with error recovery for Arbitrum Sepolia events
+    async fn process_arb_sep_events_with_recovery(&self) {
+        const RETRY_DELAY: Duration = Duration::from_secs(5);
+        
+        loop {
+            println!("::::: LISTENING TO ARBITRUM SEPOLIA :::::");
+            match self.process_arb_sep_events_inner().await {
+                Ok(_) => {
+                    // This shouldn't normally happen as the inner function has an infinite loop
+                    println!("Arbitrum Sepolia event processing completed unexpectedly. Restarting...");
+                }
+                Err(err) => {
+                    eprintln!("Error in Arbitrum Sepolia event processing: {:?}", err);
+                    println!("Restarting Arbitrum Sepolia event processing in {} seconds...", RETRY_DELAY.as_secs());
+                }
+            }
+            
+            // Wait before retrying
+            tokio::time::sleep(RETRY_DELAY).await;
+        }
+    }
+
+    // Inner function with the actual event processing logic for Arbitrum Sepolia
+    async fn process_arb_sep_events_inner(&self) -> Result<()> {
         let receiver_address = self.config.dest_contract;
 
         // Create filter for MessageSent events
@@ -277,67 +307,39 @@ impl MessageRelayer {
                     .from_block(self.config.arb_start_block);
 
         let sub = self.arbitrum_provider.subscribe_logs(&filter).await?;
-
         let mut stream = sub.into_stream();
 
         while let Some(log) = stream.next().await {
             println!("{log:?}");
-            let decoded_event = MessageReceived::decode_log(&log.inner, false).unwrap();
-            let decoded_message = from_utf8(&decoded_event.data.message).unwrap().to_string();
-            let decoded_message_id = &decoded_event.data.messageId;
-            let decoded_message_address = &decoded_event.data.sender;
-            let decoded_message_timestamp= &decoded_event.data.timestamp;
+            
+            match MessageReceived::decode_log(&log.inner, false) {
+                Ok(decoded_event) => {
+                    match from_utf8(&decoded_event.data.message) {
+                        Ok(decoded_message_str) => {
+                            let msg: Message = Message {
+                                sender: decoded_event.data.sender,
+                                message_id: decoded_event.data.messageId,
+                                message: decoded_message_str.to_string(),
+                                timestamp: decoded_event.data.timestamp
+                            };
 
-            let msg: Message = Message {
-                sender: *decoded_message_address,
-                message_id: *decoded_message_id,
-                message: decoded_message,
-                timestamp: *decoded_message_timestamp
-            };
-
-            self.relay_arb_sep_to_eth_sep_message(&msg).await?;
+                            if let Err(err) = self.relay_arb_sep_to_eth_sep_message(&msg).await {
+                                eprintln!("Error relaying message from ARB to ETH: {:?}", err);
+                                // Continue processing instead of returning the error
+                            } else {
+                                println!("Message Relayed from ARB to ETH successfully!");
+                            }
+                        },
+                        Err(err) => eprintln!("Error decoding message content: {:?}", err)
+                    }
+                },
+                Err(err) => eprintln!("Error decoding MessageReceived event: {:?}", err)
+            }
         }
         
         Ok(())
     }
-
-    async fn verify_message(&self, message: &Message) -> Result<bool> {
-        // Implement comprehensive message verification
-        // 1. Verify signature
-        let is_valid_signature = self.verify_signature(
-            message.message_id,
-            message.sender
-        ).await?;
-
-        if !is_valid_signature {
-            return Ok(false);
-        }
-
-        // 2. Check message age
-        let current_block = self.ethereum_provider
-            .get_block_number()
-            .await?;
-        
-        let message_block = message.timestamp.to::<u64>();
-        if current_block - message_block > self.config.confirmation_blocks {
-            log::warn!("Message {} is too old", message.message_id);
-            return Ok(false);
-        }
-
-        // Add additional verification as needed
-        Ok(true)
-    }
-
-    async fn verify_signature(
-        &self,
-        message_id: B256,
-        sender: Address,
-    ) -> Result<bool> {
-        // Implement signature verification logic
-        // This is a placeholder - implement actual verification
-        Ok(true)
-    }
-
+    
     async fn relay_arb_sep_to_eth_sep_message(&self, message: &Message) -> Result<()> {
         let path = PathBuf::from(&self.config.eth_sep_contract_abi);
 
@@ -432,9 +434,11 @@ async fn main() -> Result<()> {
     };
 
     // Create and start the relayer
-    let relayer = MessageRelayer::new(config).await?;
+    let relayer = Arc::new(MessageRelayer::new(config).await?);
     relayer.start().await?;
 
+    // Keep the program running
+    tokio::signal::ctrl_c().await?;
     Ok(())
 }
 
@@ -443,46 +447,141 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_log_variable_generation_sepolia() {
-        // sample log
-        // Log { inner: Log { address: 0x9a0e49c625f5a0dc02a5c16d68e431722789a6c2, data: LogData { topics: [0x4bac9e82130c606f1d88edf9a3046ffd43931f3ef54e0e1feaabbd669757b98f, 0x03ee542079f34b37686142e3767f846c5e19340839e6e2e977af37e1f9f90135, 0x000000000000000000000000a014ca018a22f96d00b920410834bb1504b183e1], data: 0x00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000067b9b57400000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000353594e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 } }, block_hash: Some(0xdebe7a60464ff6ff992c194e9891201a628bc86a3939a29aeedff6a4ca6054be), block_number: Some(7761468), block_timestamp: None, transaction_hash: Some(0x65ccf2557d1cfc2aa11b073c87522894b8dec0e7941fd9710097431a951c18c1), transaction_index: Some(138), log_index: Some(143), removed: false }
+    #[tokio::test]
+    async fn test_eth_sep_to_arb_sep() -> Result<()>{
+        // Log { inner: Log { address: 0x3423eebf8d3c03b7109ed9c97f946d209ab45358, data: LogData { topics: [0x4bac9e82130c606f1d88edf9a3046ffd43931f3ef54e0e1feaabbd669757b98f, 0xd9a1b67cff6c44247b8ea7652dc0a3e113820cea9cea7bb5f25a9e3d1b6001d8, 0x000000000000000000000000a014ca018a22f96d00b920410834bb1504b183e1], data: 0x00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000067bc681c00000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000353594e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 } }, block_hash: Some(0xd4090d17efd51c34c2dc57b87d575f1a5498258f1ade68002006e7a8c7214f40), block_number: Some(7775784), block_timestamp: None, transaction_hash: Some(0xef1177a91c35309d13c92a66f1ffaca9b22648fcc105357c5d356fc0dc38b49a), transaction_index: Some(118), log_index: Some(157), removed: false }
         let log = Log {
             inner: ETHLog {
-                address: "0x9a0e49c625f5a0dc02a5c16d68e431722789a6c2".parse().unwrap(),
+                address: "0x3423eebf8d3c03b7109ed9c97f946d209ab45358".parse().unwrap(),
                 data: LogData::new_unchecked(
                     vec![
                         "0x4bac9e82130c606f1d88edf9a3046ffd43931f3ef54e0e1feaabbd669757b98f".parse().unwrap(),
-                        "0x03ee542079f34b37686142e3767f846c5e19340839e6e2e977af37e1f9f90135".parse().unwrap(),
+                        "0xd9a1b67cff6c44247b8ea7652dc0a3e113820cea9cea7bb5f25a9e3d1b6001d8".parse().unwrap(),
                         "0x000000000000000000000000a014ca018a22f96d00b920410834bb1504b183e1".parse().unwrap(),
                     ],
                     // Corrected hexadecimal string (even length)
-                    "0x00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000067b9b57400000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000353594e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".parse().unwrap(),
+                    "0x00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000067bc681c00000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000353594e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".parse().unwrap(),
                 ),
             },
-            block_hash: Some("0xdebe7a60464ff6ff992c194e9891201a628bc86a3939a29aeedff6a4ca6054be".parse().unwrap()),
-            block_number: Some(7704169 as u64),
+            block_hash: Some("0xd4090d17efd51c34c2dc57b87d575f1a5498258f1ade68002006e7a8c7214f40".parse().unwrap()),
+            block_number: Some(7775784 as u64),
             block_timestamp: None,
-            transaction_hash: Some("0x88d038ba62297a2ad5d7a55ec29443aaf7eaf114e0b21721eab73bb724e088d6".parse().unwrap()),
-            transaction_index: Some(93 as u64),
-            log_index: Some(332 as u64),
+            transaction_hash: Some("0xef1177a91c35309d13c92a66f1ffaca9b22648fcc105357c5d356fc0dc38b49a".parse().unwrap()),
+            transaction_index: Some(118 as u64),
+            log_index: Some(157 as u64),
             removed: false,
         };
 
-        let decoded_event = MessageSent::decode_log(&log.inner, false).unwrap();
+        let decoded_event = MessageSender::MessageSent::decode_log(&log.inner, false).unwrap();
         let decoded_message = from_utf8(&decoded_event.data.message).unwrap();
         let decoded_message_id = &decoded_event.data.messageId;
         let decoded_message_address = &decoded_event.data.sender;
         let decoded_message_timestamp = &decoded_event.data.timestamp;
 
         println!("new format: {:?}", &decoded_message);
-        // let message_decoded_bytes = justHex::decode(decoded.data.message).unwrap();
-        // let message_decoded_string = from_utf8(&message_decoded_bytes).unwrap();
-        // println!("{:?}", message_decoded_string);
+        
+        // Initialize logging
+        env_logger::init();
+                
+        // Load environment variables
+        dotenv().ok();
+
+        // Create relayer configuration
+        let config = RelayerConfig {
+            ethereum_rpc: env::var("ETHEREUM_RPC")?,
+            arbitrum_rpc: env::var("ARBITRUM_RPC")?,
+            source_contract: Address::from_str(&env::var("ETH_SEP_CONTRACT_ADDRESS")?)?,
+            dest_contract: Address::from_str(&env::var("ARB_SEP_CONTRACT_ADDRESS")?)?,
+            relayer_private_key: env::var("RELAYER_PRIVATE_KEY")?,
+            relayer_public_address: env::var("RELAYER_PUBLIC_ADDRESS")?,
+            eth_start_block: env::var("ETH_SEP_START_BLOCK")?.parse()?,
+            arb_start_block: env::var("ARB_SEP_START_BLOCK")?.parse()?,
+            confirmation_blocks: env::var("CONFIRMATION_BLOCKS")?.parse()?,
+            eth_sep_contract_abi: env::var("ETH_SEP_CONTRACT_ABI")?.parse()?,
+            arb_sep_contract_abi: env::var("ARB_SEP_CONTRACT_ABI")?.parse()?
+        };
+
+        // Create and start the relayer
+        let relayer = MessageRelayer::new(config).await?;
+
+        let message: Message = Message {
+            message_id: *decoded_message_id,
+            sender: *decoded_message_address,
+            message: decoded_message.to_string(),
+            timestamp: *decoded_message_timestamp
+        };
+
+        relayer.relay_eth_sep_to_arb_sep_message(&message).await?;
+
+        Ok(())
     }
 
-    #[test]
-    fn test_log_variable_arb_sep_to_eth_sep() {
-        // Log { inner: Log { address: 0x6d9af71a08d8431c1a643c5ff8cd1bd2faedbc15, data: LogData { topics: [0xfbe5334ea625e76d101c05d3a8561b00ba7037610c6e918747d242d688c25a8d, 0x6767794f4c000000000000000000000000000000000000000000000000000000, 0x000000000000000000000000a014ca018a22f96d00b920410834bb1504b183e1], data: 0x00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000067b9b91d000000000000000000000000000000000000000000000000000000000000000341434b0000000000000000000000000000000000000000000000000000000000 } }, block_hash: Some(0xee9a111cdd5a95ae215f37c9fad8fa6101ada47ceca2be48bdd5ed4c14aaf7ef), block_number: Some(126215492), block_timestamp: None, transaction_hash: Some(0xe5f3297e15af50b5ca3b9170cbd7c61a38b905b77a5a3bf9c80935ed8487650a), transaction_index: Some(1), log_index: Some(0), removed: false }
+    #[tokio::test]
+    async fn test_arb_sep_to_eth_sep() -> Result<()> {
+        // Log { inner: Log { address: 0x1b6c07cd43d5a6ea384ec90dccbf8d284964c7f7, data: LogData { topics: [0xfbe5334ea625e76d101c05d3a8561b00ba7037610c6e918747d242d688c25a8d, 0x63525a3736000000000000000000000000000000000000000000000000000000, 0x000000000000000000000000f795d1aca368281ca13a98bfd0cc05d42426ef05], data: 0x00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000067bb6399000000000000000000000000000000000000000000000000000000000000000341434b0000000000000000000000000000000000000000000000000000000000 } }, block_hash: Some(0x25199e1d4849db669331992577d22417d13812ab4ab1dae0251819cf1e7e7292), block_number: Some(126617249), block_timestamp: None, transaction_hash: Some(0xcbda75f2fbfca52b1f41afcca56b1631620784c03295a2afddc1d50a25bc0de6), transaction_index: Some(2), log_index: Some(1), removed: false }
+        let log = Log {
+            inner: ETHLog {
+                address: "0x1b6c07cd43d5a6ea384ec90dccbf8d284964c7f7".parse().unwrap(),
+                data: LogData::new_unchecked(
+                    vec![
+                        "0xfbe5334ea625e76d101c05d3a8561b00ba7037610c6e918747d242d688c25a8d".parse().unwrap(),
+                        "0x63525a3736000000000000000000000000000000000000000000000000000000".parse().unwrap(),
+                        "0x000000000000000000000000f795d1aca368281ca13a98bfd0cc05d42426ef05".parse().unwrap(),
+                    ],
+                    // Corrected hexadecimal string (even length)
+                    "0x00000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000067bb6399000000000000000000000000000000000000000000000000000000000000000341434b0000000000000000000000000000000000000000000000000000000000".parse().unwrap(),
+                ),
+            },
+            block_hash: Some("0x25199e1d4849db669331992577d22417d13812ab4ab1dae0251819cf1e7e7292".parse().unwrap()),
+            block_number: Some(126617249 as u64),
+            block_timestamp: None,
+            transaction_hash: Some("0xcbda75f2fbfca52b1f41afcca56b1631620784c03295a2afddc1d50a25bc0de6".parse().unwrap()),
+            transaction_index: Some(2 as u64),
+            log_index: Some(1 as u64),
+            removed: false,
+        };
+
+        let decoded_event = MessageReceived::decode_log(&log.inner, false).unwrap();
+        let decoded_message = from_utf8(&decoded_event.data.message).unwrap();
+        let decoded_message_id = &decoded_event.data.messageId;
+        let decoded_message_address = &decoded_event.data.sender;
+        let decoded_message_timestamp = &decoded_event.data.timestamp;
+
+        println!("new format: {:?}", &decoded_message);
+
+        // Initialize logging
+        env_logger::init();
+        
+        // Load environment variables
+        dotenv().ok();
+        
+        // Create relayer configuration
+        let config = RelayerConfig {
+            ethereum_rpc: env::var("ETHEREUM_RPC")?,
+            arbitrum_rpc: env::var("ARBITRUM_RPC")?,
+            source_contract: Address::from_str(&env::var("ETH_SEP_CONTRACT_ADDRESS")?)?,
+            dest_contract: Address::from_str(&env::var("ARB_SEP_CONTRACT_ADDRESS")?)?,
+            relayer_private_key: env::var("RELAYER_PRIVATE_KEY")?,
+            relayer_public_address: env::var("RELAYER_PUBLIC_ADDRESS")?,
+            eth_start_block: env::var("ETH_SEP_START_BLOCK")?.parse()?,
+            arb_start_block: env::var("ARB_SEP_START_BLOCK")?.parse()?,
+            confirmation_blocks: env::var("CONFIRMATION_BLOCKS")?.parse()?,
+            eth_sep_contract_abi: env::var("ETH_SEP_CONTRACT_ABI")?.parse()?,
+            arb_sep_contract_abi: env::var("ARB_SEP_CONTRACT_ABI")?.parse()?
+        };
+
+        // Create and start the relayer
+        let relayer = MessageRelayer::new(config).await?;
+
+        let message: Message = Message {
+            message_id: *decoded_message_id,
+            sender: *decoded_message_address,
+            message: decoded_message.to_string(),
+            timestamp: *decoded_message_timestamp
+        };
+
+        relayer.relay_arb_sep_to_eth_sep_message(&message).await?;
+
+        Ok(())
     }
 }
