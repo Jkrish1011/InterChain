@@ -2,7 +2,7 @@
 const { ethers } = require("hardhat");
 require('dotenv').config();
 
-const { ARBITRUM_CONTRACT_ADDRESS } = process.env;
+const { ARBITRUM_SEPOLIA_CONTRACT_ADDRESS } = process.env;
 
 function generateRandomString(length) {
     let result = '';
@@ -16,11 +16,11 @@ function generateRandomString(length) {
 
 async function main() {
     
-    const contractAddress = ARBITRUM_CONTRACT_ADDRESS;
+    const contractAddress = ARBITRUM_SEPOLIA_CONTRACT_ADDRESS;
 
     // Create a new instance of the contract
-    const messengeReceiver = await ethers.getContractFactory("MessengeReceiver");
-    const receiver = messengeReceiver.attach(contractAddress);
+    const InterChainArbMessengerContract = await ethers.getContractFactory("InterChainArbitrumMessenger");
+    const arbMessenger = InterChainArbMessengerContract.attach(contractAddress);
 
     // Prepare the parameters for the receiveMessage function
     const messageId = ethers.encodeBytes32String(generateRandomString(5)); // Example message ID
@@ -32,7 +32,7 @@ async function main() {
     // console.log({TRUSTED_RELAYER_PUBLIC_ADDRESS});
 
     // Call the trustedRelayer public variable
-    // const trustedRelayer = await receiver.trustedRelayer();
+    // const trustedRelayer = await arbMessenger.trustedRelayer();
 
     // console.log(`Trusted Relayer Address: ${trustedRelayer}`);
 
@@ -44,7 +44,7 @@ async function main() {
 
     console.log({messageId});
     // Call the receiveMessage function
-    const tx = await receiver.receiveMessage(messageId, signer, timestamp);
+    const tx = await arbMessenger.receiveMessage(messageId, signer, timestamp, 0);
     
     // Wait for the transaction to be mined
     await tx.wait();

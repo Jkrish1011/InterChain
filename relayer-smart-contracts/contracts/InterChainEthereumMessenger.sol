@@ -4,36 +4,23 @@ pragma solidity ^0.8.26;
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 
 
-contract MessengeSender is Initializable {
-    // -------------------------------------- EVENTS --------------------------------------
-
-    // Event to Notify relayer that the message has been initiated.
-    event MessageSent(
-        bytes32 indexed messageId,
-        address indexed sender,
-        bytes message,
-        uint256 timestamp,
-        bytes signature
-    );
-    
-    event MessageReceived(
-        bytes32 indexed messageId,
-        address indexed sender,
-        bytes message,
-        uint256 timestamp
-    );
-    
-    event MessageAcknowledged(
-        bytes32 indexed messageId,
-        address indexed sender,
-        bytes message,
-        uint256 timestamp
-    );
-
+contract InterChainEthereumMessenger is Initializable {
     // -------------------------------------- DECLARATIONS --------------------------------------
     
     // Address of the trusted relayer   
     address public trustedRelayer;
+
+    // Enum to list all supported chains
+    enum Chains {
+        Ethereum,
+        Polygon,
+        Arbitrum,
+        Optimism,
+        Base,
+        Avalanche,
+        BSC,
+        Gnosis 
+    }
     
     // To prevent replay attacks
     uint256 private nonce;
@@ -45,16 +32,28 @@ contract MessengeSender is Initializable {
         uint256 timestamp;
         bytes signature;
         bool processed;
+        Chains targetChain;
     }
 
     // A mapping to track/store all messages passed.
     mapping(bytes32 => Message) public messages;
 
-
     modifier onlyTrustedRelayer() {
         require(msg.sender == trustedRelayer, "only-trusted-relayer-can-relay-messages");
         _;
     }
+
+    // -------------------------------------- EVENTS --------------------------------------
+
+    // Event to Notify relayer that the message has been initiated.
+    event InterChainEthereumMessage(
+        bytes32 indexed messageId,
+        address indexed sender,
+        bytes message,
+        uint256 timestamp,
+        bytes signature,
+        Chains targetChain
+    );
 
     // -------------------------------------- FUNCTIONS --------------------------------------
 
@@ -72,7 +71,11 @@ contract MessengeSender is Initializable {
         return "";
     }
 
-    function sendMessage(string memory _message) external {
+    function verifySignature() internal pure returns (bool) {
+        return true;
+    }
+
+    function sendMessage(string memory _message, Chains _targetChain) external {
         bytes32 messageId = keccak256(abi.encodePacked(
             msg.sender,
             bytes(_message),
@@ -88,16 +91,18 @@ contract MessengeSender is Initializable {
             message: bytes(_message),
             timestamp: block.timestamp,
             signature: _signature,
-            processed: false
+            processed: false,
+            targetChain: _targetChain
         });
 
-        emit MessageSent(
+        emit InterChainEthereumMessage(
             messageId,
             msg.sender,
             bytes(_message),
             block.timestamp,
-            _signature
-            );
+            _signature,
+            _targetChain
+        );
         
         nonce++;
     }
@@ -111,12 +116,15 @@ contract MessengeSender is Initializable {
         // verify signature in the message from the sender - TODO
         
         messages[messageId].processed = true;
+        bytes memory _signature = createSignature();
         
-        emit MessageAcknowledged(
+        emit InterChainEthereumMessage(
             messageId,
             msg.sender,
             bytes("SYN-ACK"),
-            block.timestamp
+            block.timestamp,
+            _signature,
+            messages[messageId].targetChain
         );
     }
 }

@@ -20,11 +20,11 @@ async function main() {
 
     console.log({deploymentReceipt});
     // Get the transaction hash and block number
-    console.log("Transaction hash:", deploymentReceipt.transactionHash);
-    console.log("Block number:", deploymentReceipt.blockNumber);
+    // console.log("Transaction hash:", deploymentReceipt.transactionHash);
+    // console.log("Block number:", deploymentReceipt.blockNumber);
 
     // Get the proxy address
-    const proxyAddress = messengeReceiver.contractAddress;
+    const proxyAddress = messengeReceiver.deploymentReceipt.contractAddress;
     console.log("Proxy deployed to:", proxyAddress);
 
     // const proxyAddress = "0x1b6c07cd43D5a6EA384eC90dcCbF8d284964C7f7";

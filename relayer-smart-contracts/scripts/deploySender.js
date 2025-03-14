@@ -6,7 +6,7 @@ const { TRUSTED_RELAYER_PUBLIC_ADDRESS } = process.env;
 
 async function main() {
     // Get the contract factory for the SendMessenger contract
-    const SendMessenger = await ethers.getContractFactory("MessengeSender");
+    const SendMessenger = await ethers.getContractFactory("InterChainEthereumMessenger");
     
     // Deploy the contract
     const sendMessenger = await SendMessenger.deploy(TRUSTED_RELAYER_PUBLIC_ADDRESS);

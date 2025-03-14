@@ -5,6 +5,11 @@
       "address": "0x3423EEbF8d3C03b7109ed9c97F946D209aB45358",
       "txHash": "0x10e5fd3b93cf6475eae3774afd9d32fab7306e612db4a096a4d63838fd43308c",
       "kind": "transparent"
+    },
+    {
+      "address": "0x55751a089Ec272595E61980772EEC0a9117Da4f5",
+      "txHash": "0x0d1699c40b46908846c368c6bad693d8041e160c5511e4fd88bdb7246d26c093",
+      "kind": "transparent"
     }
   ],
   "impls": {
@@ -119,6 +124,169 @@
                 "label": "processed",
                 "type": "t_bool",
                 "offset": 0,
+                "slot": "5"
+              }
+            ],
+            "numberOfBytes": "192"
+          },
+          "t_uint256": {
+            "label": "uint256",
+            "numberOfBytes": "32"
+          }
+        },
+        "namespaces": {
+          "erc7201:openzeppelin.storage.Initializable": [
+            {
+              "contract": "Initializable",
+              "label": "_initialized",
+              "type": "t_uint64",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:69",
+              "offset": 0,
+              "slot": "0"
+            },
+            {
+              "contract": "Initializable",
+              "label": "_initializing",
+              "type": "t_bool",
+              "src": "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol:73",
+              "offset": 8,
+              "slot": "0"
+            }
+          ]
+        }
+      }
+    },
+    "f82a9ef9f3cd23fbdf348ce989cb1874f68e7ebb5ad51f64209ad8d06196e35e": {
+      "address": "0x2186Deb1Ace03064A9a10fCE19720Bf48113e70C",
+      "txHash": "0x3fad6276c69d052e65326bfd64b5f7c60f4c1eefe05178c8e4a9388b761af1df",
+      "layout": {
+        "solcVersion": "0.8.28",
+        "storage": [
+          {
+            "label": "trustedRelayer",
+            "offset": 0,
+            "slot": "0",
+            "type": "t_address",
+            "contract": "InterChainEthereumMessenger",
+            "src": "contracts/InterChainEthereumMessenger.sol:11"
+          },
+          {
+            "label": "nonce",
+            "offset": 0,
+            "slot": "1",
+            "type": "t_uint256",
+            "contract": "InterChainEthereumMessenger",
+            "src": "contracts/InterChainEthereumMessenger.sol:26"
+          },
+          {
+            "label": "messages",
+            "offset": 0,
+            "slot": "2",
+            "type": "t_mapping(t_bytes32,t_struct(Message)407_storage)",
+            "contract": "InterChainEthereumMessenger",
+            "src": "contracts/InterChainEthereumMessenger.sol:39"
+          }
+        ],
+        "types": {
+          "t_bool": {
+            "label": "bool",
+            "numberOfBytes": "1"
+          },
+          "t_struct(InitializableStorage)7_storage": {
+            "label": "struct Initializable.InitializableStorage",
+            "members": [
+              {
+                "label": "_initialized",
+                "type": "t_uint64",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "_initializing",
+                "type": "t_bool",
+                "offset": 8,
+                "slot": "0"
+              }
+            ],
+            "numberOfBytes": "32"
+          },
+          "t_uint64": {
+            "label": "uint64",
+            "numberOfBytes": "8"
+          },
+          "t_address": {
+            "label": "address",
+            "numberOfBytes": "20"
+          },
+          "t_bytes32": {
+            "label": "bytes32",
+            "numberOfBytes": "32"
+          },
+          "t_bytes_storage": {
+            "label": "bytes",
+            "numberOfBytes": "32"
+          },
+          "t_enum(Chains)389": {
+            "label": "enum InterChainEthereumMessenger.Chains",
+            "members": [
+              "Ethereum",
+              "Polygon",
+              "Arbitrum",
+              "Optimism",
+              "Base",
+              "Avalanche",
+              "BSC",
+              "Gnosis"
+            ],
+            "numberOfBytes": "1"
+          },
+          "t_mapping(t_bytes32,t_struct(Message)407_storage)": {
+            "label": "mapping(bytes32 => struct InterChainEthereumMessenger.Message)",
+            "numberOfBytes": "32"
+          },
+          "t_struct(Message)407_storage": {
+            "label": "struct InterChainEthereumMessenger.Message",
+            "members": [
+              {
+                "label": "messageId",
+                "type": "t_bytes32",
+                "offset": 0,
+                "slot": "0"
+              },
+              {
+                "label": "sender",
+                "type": "t_address",
+                "offset": 0,
+                "slot": "1"
+              },
+              {
+                "label": "message",
+                "type": "t_bytes_storage",
+                "offset": 0,
+                "slot": "2"
+              },
+              {
+                "label": "timestamp",
+                "type": "t_uint256",
+                "offset": 0,
+                "slot": "3"
+              },
+              {
+                "label": "signature",
+                "type": "t_bytes_storage",
+                "offset": 0,
+                "slot": "4"
+              },
+              {
+                "label": "processed",
+                "type": "t_bool",
+                "offset": 0,
+                "slot": "5"
+              },
+              {
+                "label": "targetChain",
+                "type": "t_enum(Chains)389",
+                "offset": 1,
                 "slot": "5"
               }
             ],

@@ -4,30 +4,30 @@ require('dotenv').config();
 const { TRUSTED_RELAYER_PUBLIC_ADDRESS } = process.env;
 
 async function main() {
-    // const [deployer] = await ethers.getSigners();
+    const [deployer] = await ethers.getSigners();
 
-    // console.log("Deploying contracts with the account:", deployer.address);
+    console.log("Deploying contracts with the account:", deployer.address);
 
-    // // Deploy the implementation contract
-    // const MessengeReceiver = await ethers.getContractFactory("MessengeSender");
-    // console.log("Deploying MessengeSender...");
+    // Deploy the implementation contract
+    const InterChainEthereumMessenger = await ethers.getContractFactory("InterChainEthereumMessenger");
+    console.log("Deploying InterChainEthereumMessenger...");
 
-    // const messengeReceiver = await upgrades.deployProxy(MessengeReceiver, [TRUSTED_RELAYER_PUBLIC_ADDRESS], {
-    //     initializer: "initialize",
-    // });
+    const interChainEthereumMessenger = await upgrades.deployProxy(InterChainEthereumMessenger, [TRUSTED_RELAYER_PUBLIC_ADDRESS], {
+        initializer: "initialize",
+    });
 
-    // const deploymentReceipt = await messengeReceiver.deploymentTransaction().wait();
+    const deploymentReceipt = await interChainEthereumMessenger.deploymentTransaction().wait();
 
-    // console.log({deploymentReceipt});
-    // // Get the transaction hash and block number
-    // // console.log("Transaction hash:", deploymentReceipt.hash);
-    // // console.log("Block number:", deploymentReceipt.blockNumber);
+    console.log({deploymentReceipt});
+    // Get the transaction hash and block number
+    // console.log("Transaction hash:", deploymentReceipt.hash);
+    // console.log("Block number:", deploymentReceipt.blockNumber);
 
-    // // Get the proxy address
-    // const proxyAddress = messengeReceiver.contractAddress;
-    // console.log("Proxy deployed to:", proxyAddress);
+    // Get the proxy address
+    const proxyAddress = interChainEthereumMessenger.deploymentReceipt.contractAddress;
+    console.log("Proxy deployed to:", proxyAddress);
 
-    const proxyAddress = "0x3423EEbF8d3C03b7109ed9c97F946D209aB45358";
+    // const proxyAddress = "0x55751a089Ec272595E61980772EEC0a9117Da4f5";
 
     // Get the implementation address
     const implementationAddress = await upgrades.erc1967.getImplementationAddress(proxyAddress);
