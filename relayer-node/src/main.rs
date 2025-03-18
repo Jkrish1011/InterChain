@@ -31,29 +31,75 @@ use serde::{Deserialize, Serialize};
 
 sol! {
     #[derive(Debug)]
-    contract MessageSender {
-        event MessageSent(bytes32 indexed messageId,address indexed sender,bytes message,uint256 timestamp,bytes signature);
-        event MessageAcknowledged(bytes32 indexed messageId,address indexed sender,bytes message);
+    contract InterChainEthereumMessenger {
+        enum Chains {Ethereum,Polygon,Arbitrum,Optimism,Base,Avalanche,BSC, Gnosis}
+        event InterChainEthereumMessage(bytes32 indexed messageId, address indexed sender, bytes message, uint256 timestamp, bytes signature, Chains targetChain);
     }
 }
 
 sol!{
     #[derive(Debug)]
-    event MessageReceived(
-        bytes32 indexed messageId,
-        address indexed sender,
-        bytes message,
-        uint256 timestamp
-    );
+    contract InterChainArbitrumMessenger{
+        enum Chains {Ethereum,Polygon,Arbitrum,Optimism,Base,Avalanche,BSC, Gnosis}
+        event InterChainArbitrumMessage(bytes32 indexed messageId,address indexed sender,bytes message,uint256 timestamp,bytes signature, Chains targetChain);
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+enum EthereumChains {Ethereum,Polygon,Arbitrum,Optimism,Base,Avalanche,BSC, Gnosis}
+
+impl From<InterChainEthereumMessenger::Chains> for EthereumChains {
+    fn from(chain: InterChainEthereumMessenger::Chains) -> EthereumChains {
+        match chain {
+            InterChainEthereumMessenger::Chains::Ethereum => EthereumChains::Ethereum,
+            InterChainEthereumMessenger::Chains::Polygon => EthereumChains::Polygon,
+            InterChainEthereumMessenger::Chains::Arbitrum => EthereumChains::Arbitrum,
+            InterChainEthereumMessenger::Chains::Optimism => EthereumChains::Optimism,
+            InterChainEthereumMessenger::Chains::Base => EthereumChains::Base,
+            InterChainEthereumMessenger::Chains::Avalanche => EthereumChains::Avalanche,
+            InterChainEthereumMessenger::Chains::BSC => EthereumChains::BSC,
+            InterChainEthereumMessenger::Chains::Gnosis => EthereumChains::Gnosis,
+            InterChainEthereumMessenger::Chains::__Invalid => panic!("Invalid chain"),
+        }
+    }
 }
 
 
 #[derive(Debug, Serialize, Deserialize)]
-struct Message {
+enum ArbitrumChains {Ethereum,Polygon,Arbitrum,Optimism,Base,Avalanche,BSC, Gnosis}
+
+impl From<InterChainArbitrumMessenger::Chains> for ArbitrumChains {
+    fn from(chain: InterChainArbitrumMessenger::Chains) -> ArbitrumChains {
+        match chain {
+            InterChainArbitrumMessenger::Chains::Ethereum => ArbitrumChains::Ethereum,
+            InterChainArbitrumMessenger::Chains::Polygon => ArbitrumChains::Polygon,
+            InterChainArbitrumMessenger::Chains::Arbitrum => ArbitrumChains::Arbitrum,
+            InterChainArbitrumMessenger::Chains::Optimism => ArbitrumChains::Optimism,
+            InterChainArbitrumMessenger::Chains::Base => ArbitrumChains::Base,
+            InterChainArbitrumMessenger::Chains::Avalanche => ArbitrumChains::Avalanche,
+            InterChainArbitrumMessenger::Chains::BSC => ArbitrumChains::BSC,
+            InterChainArbitrumMessenger::Chains::Gnosis => ArbitrumChains::Gnosis,
+            InterChainArbitrumMessenger::Chains::__Invalid => panic!("Invalid chain"),
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct EthMessage {
     message_id: FixedBytes<32>,
     sender: Address,
     message: String,
-    timestamp: U256
+    timestamp: U256,
+    target_chain: EthereumChains
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ArbMessage {
+    message_id: FixedBytes<32>,
+    sender: Address,
+    message: String,
+    timestamp: U256,
+    target_chain: ArbitrumChains
 }
 
 #[derive(Debug)]
@@ -139,7 +185,7 @@ async fn read_from_keystore() -> Result<EthereumWallet> {
 impl MessageRelayer {
     async fn new(config: RelayerConfig) -> Result<Self> {
         // Ethereum WebSocket Provider
-        let ws = WsConnect::new(config.ethereum_rpc.clone());
+        let ws: WsConnect = WsConnect::new(config.ethereum_rpc.clone());
         let wallet: EthereumWallet = read_from_keystore().await?;
 
         let ethereum_provider = ProviderBuilder::new()
@@ -167,7 +213,7 @@ impl MessageRelayer {
     async fn start(self: Arc<Self>) -> Result<()> {
         // Clone the Arc for each task
         // Clone the Arc for each task
-        let self_clone = Arc::clone(&self);
+        let self_clone: Arc<MessageRelayer> = Arc::clone(&self);
 
         // Spawn the task with the cloned Arc
         let process_eth_sep_events = tokio::spawn(async move {
@@ -213,8 +259,8 @@ impl MessageRelayer {
     async fn process_eth_sep_events_inner(&self) -> Result<()> {
         let sender_address = self.config.source_contract;
         
-        let message_sent_topic = MessageSender::MessageSent::SIGNATURE_HASH;
-        let message_acknowledged_topic = MessageSender::MessageAcknowledged::SIGNATURE_HASH;
+        let message_sent_topic = InterChainEthereumMessenger::InterChainEthereumMessage::SIGNATURE_HASH;
+        // let message_acknowledged_topic = MessageSender::MessageAcknowledged::SIGNATURE_HASH;
 
         // Create filter for MessageSent events
         let filter = Filter::new()
@@ -230,22 +276,37 @@ impl MessageRelayer {
             // Use match instead of if/else for better error handling
             match log.topics().get(0) {
                 Some(topic) if *topic == message_sent_topic => {
-                    match MessageSender::MessageSent::decode_log(&log.inner, false) {
+                    match InterChainEthereumMessenger::InterChainEthereumMessage::decode_log(&log.inner, false) {
                         Ok(decoded_event) => {
                             match from_utf8(&decoded_event.data.message) {
                                 Ok(decoded_message_str) => {
-                                    let msg: Message = Message {
+                                    let msg: EthMessage = EthMessage {
                                         sender: decoded_event.data.sender,
                                         message_id: decoded_event.data.messageId,
                                         message: decoded_message_str.to_string(),
-                                        timestamp: decoded_event.data.timestamp
+                                        timestamp: decoded_event.data.timestamp,
+                                        target_chain: EthereumChains::from(InterChainEthereumMessenger::Chains::from(decoded_event.data.targetChain.clone()))
                                     };
-
-                                    if let Err(err) = self.relay_eth_sep_to_arb_sep_message(&msg).await {
-                                        eprintln!("Error relaying message from ETH to ARB: {:?}", err);
-                                        // Continue processing instead of returning the error
-                                    } else {
-                                        println!("Message Relayed from ETH to ARB successfully!");
+                                    
+                                    match msg.target_chain {
+                                        EthereumChains::Arbitrum => {
+                                            if let Err(err) = self.relay_eth_sep_to_arb_sep_message(&msg).await {
+                                                eprintln!("Error relaying message from ETH to ARB: {:?}", err);
+                                                // Continue processing instead of returning the error
+                                            } else {
+                                                println!("Message Relayed from ETH to ARB successfully!");
+                                            }
+                                        },
+                                        EthereumChains::Optimism => {
+                                            println!("NOT YET IMPLEMENTED!");
+                                        }
+                                        EthereumChains::Base => {
+                                            println!("NOT YET IMPLEMENTED!");
+                                        }
+                                        EthereumChains::Polygon => {
+                                            println!("NOT YET IMPLEMENTED!");
+                                        },
+                                        _ => println!("Unknown command")
                                     }
                                 },
                                 Err(err) => eprintln!("Error decoding message content: {:?}", err)
@@ -254,20 +315,20 @@ impl MessageRelayer {
                         Err(err) => eprintln!("Error decoding MessageSent event: {:?}", err)
                     }
                 },
-                Some(topic) if *topic == message_acknowledged_topic => {
-                    match MessageSender::MessageAcknowledged::decode_log(&log.inner, false) {
-                        Ok(decoded_event) => {
-                            match from_utf8(&decoded_event.data.message) {
-                                Ok(decoded_message_str) => {
-                                    println!("Message Acknowledged: {}", decoded_message_str);
-                                    // Process acknowledgment if needed
-                                },
-                                Err(err) => eprintln!("Error decoding acknowledged message content: {:?}", err)
-                            }
-                        },
-                        Err(err) => eprintln!("Error decoding MessageAcknowledged event: {:?}", err)
-                    }
-                },
+                // Some(topic) if *topic == message_acknowledged_topic => {
+                //     match MessageSender::MessageAcknowledged::decode_log(&log.inner, false) {
+                //         Ok(decoded_event) => {
+                //             match from_utf8(&decoded_event.data.message) {
+                //                 Ok(decoded_message_str) => {
+                //                     println!("Message Acknowledged: {}", decoded_message_str);
+                //                     // Process acknowledgment if needed
+                //                 },
+                //                 Err(err) => eprintln!("Error decoding acknowledged message content: {:?}", err)
+                //             }
+                //         },
+                //         Err(err) => eprintln!("Error decoding MessageAcknowledged event: {:?}", err)
+                //     }
+                // },
                 _ => eprintln!("Unknown event topic")
             }
         }
@@ -312,23 +373,40 @@ impl MessageRelayer {
         while let Some(log) = stream.next().await {
             println!("{log:?}");
             
-            match MessageReceived::decode_log(&log.inner, false) {
+            match InterChainArbitrumMessenger::InterChainArbitrumMessage::decode_log(&log.inner, false) {
                 Ok(decoded_event) => {
                     match from_utf8(&decoded_event.data.message) {
                         Ok(decoded_message_str) => {
-                            let msg: Message = Message {
+                            let msg: ArbMessage = ArbMessage {
                                 sender: decoded_event.data.sender,
                                 message_id: decoded_event.data.messageId,
                                 message: decoded_message_str.to_string(),
-                                timestamp: decoded_event.data.timestamp
+                                timestamp: decoded_event.data.timestamp,
+                                target_chain: ArbitrumChains::from(decoded_event.data.targetChain)
                             };
 
-                            if let Err(err) = self.relay_arb_sep_to_eth_sep_message(&msg).await {
-                                eprintln!("Error relaying message from ARB to ETH: {:?}", err);
-                                // Continue processing instead of returning the error
-                            } else {
-                                println!("Message Relayed from ARB to ETH successfully!");
+                            match msg.target_chain {
+                                ArbitrumChains::Ethereum => {
+                                    if let Err(err) = self.relay_arb_sep_to_eth_sep_message(&msg).await {
+                                        eprintln!("Error relaying message from ARB to ETH: {:?}", err);
+                                        // Continue processing instead of returning the error
+                                    } else {
+                                        println!("Message Relayed from ARB to ETH successfully!");
+                                    }
+                                },
+                                ArbitrumChains::Optimism => {
+                                    println!("NOT YET IMPLEMENTED!");
+                                }
+                                ArbitrumChains::Base => {
+                                    println!("NOT YET IMPLEMENTED!");
+                                }
+                                ArbitrumChains::Polygon => {
+                                    println!("NOT YET IMPLEMENTED!");
+                                },
+                                _ => println!("Unknown command")
                             }
+
+                           
                         },
                         Err(err) => eprintln!("Error decoding message content: {:?}", err)
                     }
@@ -340,7 +418,7 @@ impl MessageRelayer {
         Ok(())
     }
     
-    async fn relay_arb_sep_to_eth_sep_message(&self, message: &Message) -> Result<()> {
+    async fn relay_arb_sep_to_eth_sep_message(&self, message: &ArbMessage) -> Result<()> {
         let path = PathBuf::from(&self.config.eth_sep_contract_abi);
 
         let address_string = &self.config.relayer_public_address;
@@ -365,7 +443,7 @@ impl MessageRelayer {
     }
 
     // This function is to relay messages to arbitrum sepolia testnet. So use, arbitrum based config params.
-    async fn relay_eth_sep_to_arb_sep_message(&self, message: &Message) -> Result<()> {
+    async fn relay_eth_sep_to_arb_sep_message(&self, message: &EthMessage) -> Result<()> {
         let path = PathBuf::from(&self.config.arb_sep_contract_abi);
 
         // If you have a hex string with "0x" prefix
@@ -449,30 +527,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_eth_sep_to_arb_sep() -> Result<()>{
-        // Log { inner: Log { address: 0x3423eebf8d3c03b7109ed9c97f946d209ab45358, data: LogData { topics: [0x4bac9e82130c606f1d88edf9a3046ffd43931f3ef54e0e1feaabbd669757b98f, 0xd9a1b67cff6c44247b8ea7652dc0a3e113820cea9cea7bb5f25a9e3d1b6001d8, 0x000000000000000000000000a014ca018a22f96d00b920410834bb1504b183e1], data: 0x00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000067bc681c00000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000353594e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 } }, block_hash: Some(0xd4090d17efd51c34c2dc57b87d575f1a5498258f1ade68002006e7a8c7214f40), block_number: Some(7775784), block_timestamp: None, transaction_hash: Some(0xef1177a91c35309d13c92a66f1ffaca9b22648fcc105357c5d356fc0dc38b49a), transaction_index: Some(118), log_index: Some(157), removed: false }
+        // Log { inner: Log { address: 0x55751a089ec272595e61980772eec0a9117da4f5, data: LogData { topics: [0x6090cb4ef2fd0cb26c2a2b014b6b25d87ff06d9051f1d7be5804fee367d0b6fe, 0x281efbc2aaa4f9bcdd35af2133ccebf6d61f9326d6d142a9a42664c971d71ee9, 0x000000000000000000000000a014ca018a22f96d00b920410834bb1504b183e1], data: 0x00000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000067d916d800000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000353594e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 } }, block_hash: Some(0x1bd03a92a6311e9c75f6a613e3542618a2dfe4913756de0517b667ea3708af3c), block_number: Some(7926399), block_timestamp: None, transaction_hash: Some(0x632bb238af00f456ea455cc258476813a177fe4bc45c74aa20dcf908af821d46), transaction_index: Some(87), log_index: Some(173), removed: false }
         let log = Log {
             inner: ETHLog {
-                address: "0x3423eebf8d3c03b7109ed9c97f946d209ab45358".parse().unwrap(),
+                address: "0x55751a089ec272595e61980772eec0a9117da4f5".parse().unwrap(),
                 data: LogData::new_unchecked(
                     vec![
-                        "0x4bac9e82130c606f1d88edf9a3046ffd43931f3ef54e0e1feaabbd669757b98f".parse().unwrap(),
-                        "0xd9a1b67cff6c44247b8ea7652dc0a3e113820cea9cea7bb5f25a9e3d1b6001d8".parse().unwrap(),
+                        "0x6090cb4ef2fd0cb26c2a2b014b6b25d87ff06d9051f1d7be5804fee367d0b6fe".parse().unwrap(),
+                        "0x281efbc2aaa4f9bcdd35af2133ccebf6d61f9326d6d142a9a42664c971d71ee9".parse().unwrap(),
                         "0x000000000000000000000000a014ca018a22f96d00b920410834bb1504b183e1".parse().unwrap(),
                     ],
                     // Corrected hexadecimal string (even length)
-                    "0x00000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000067bc681c00000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000353594e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".parse().unwrap(),
+                    "0x00000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000067d916d800000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000353594e00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000".parse().unwrap(),
                 ),
             },
-            block_hash: Some("0xd4090d17efd51c34c2dc57b87d575f1a5498258f1ade68002006e7a8c7214f40".parse().unwrap()),
-            block_number: Some(7775784 as u64),
+            block_hash: Some("0x1bd03a92a6311e9c75f6a613e3542618a2dfe4913756de0517b667ea3708af3c".parse().unwrap()),
+            block_number: Some(7926399 as u64),
             block_timestamp: None,
-            transaction_hash: Some("0xef1177a91c35309d13c92a66f1ffaca9b22648fcc105357c5d356fc0dc38b49a".parse().unwrap()),
-            transaction_index: Some(118 as u64),
-            log_index: Some(157 as u64),
+            transaction_hash: Some("0x26336a4b070b14df14d31449d90e34edb2ef1c8199fb870dd20b6916325697d7".parse().unwrap()),
+            transaction_index: Some(193 as u64),
+            log_index: Some(275 as u64),
             removed: false,
         };
 
-        let decoded_event = MessageSender::MessageSent::decode_log(&log.inner, false).unwrap();
+        let decoded_event = InterChainEthereumMessenger::InterChainEthereumMessage::decode_log(&log.inner, false).unwrap();
         let decoded_message = from_utf8(&decoded_event.data.message).unwrap();
         let decoded_message_id = &decoded_event.data.messageId;
         let decoded_message_address = &decoded_event.data.sender;
@@ -504,11 +582,12 @@ mod tests {
         // Create and start the relayer
         let relayer = MessageRelayer::new(config).await?;
 
-        let message: Message = Message {
+        let message: EthMessage = EthMessage {
             message_id: *decoded_message_id,
             sender: *decoded_message_address,
             message: decoded_message.to_string(),
-            timestamp: *decoded_message_timestamp
+            timestamp: *decoded_message_timestamp,
+            target_chain: EthereumChains::Arbitrum
         };
 
         relayer.relay_eth_sep_to_arb_sep_message(&message).await?;
@@ -541,7 +620,7 @@ mod tests {
             removed: false,
         };
 
-        let decoded_event = MessageReceived::decode_log(&log.inner, false).unwrap();
+        let decoded_event = InterChainArbitrumMessenger::InterChainArbitrumMessage::decode_log(&log.inner, false).unwrap();
         let decoded_message = from_utf8(&decoded_event.data.message).unwrap();
         let decoded_message_id = &decoded_event.data.messageId;
         let decoded_message_address = &decoded_event.data.sender;
@@ -573,11 +652,12 @@ mod tests {
         // Create and start the relayer
         let relayer = MessageRelayer::new(config).await?;
 
-        let message: Message = Message {
+        let message: ArbMessage = ArbMessage {
             message_id: *decoded_message_id,
             sender: *decoded_message_address,
             message: decoded_message.to_string(),
-            timestamp: *decoded_message_timestamp
+            timestamp: *decoded_message_timestamp,
+            target_chain: ArbitrumChains::Ethereum
         };
 
         relayer.relay_arb_sep_to_eth_sep_message(&message).await?;

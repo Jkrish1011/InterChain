@@ -15,5 +15,6 @@ cargo run
 3. Tests
 
 ```
-cargo test -- --test test_log_variable_eth_sep_to_arb_sep --nocapture
+cargo test -- --test test_eth_sep_to_arb_sep --nocapture
+cargo test -- --test test_arb_sep_to_eth_sep --nocapture
 ```
