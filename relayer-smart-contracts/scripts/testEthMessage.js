@@ -16,8 +16,11 @@ async function main() {
     // Define the message you want to send
     const message = "SYN";
 
+    const messageHash = ethers.solidityPackedKeccak256(['string', 'uint256'], [message, 2]);
+    const signature = await signer.signMessage(ethers.getBytes(messageHash));
+
     // Call the sendMessage function
-    const tx = await sendETHMessenge.sendMessage(message, 2);
+    const tx = await sendETHMessenge.sendMessage(message, 2, signature);
 
     // Wait for the transaction to be mined
     await tx.wait();

@@ -2,6 +2,8 @@
 pragma solidity ^0.8.26;
 
 import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 
 contract InterChainEthereumMessenger is Initializable {
@@ -65,25 +67,31 @@ contract InterChainEthereumMessenger is Initializable {
         trustedRelayer = _trustedRelayer;
     }
 
+    function verifySignature(string memory _message, Chains _targetChain, bytes memory _signature) internal view returns (bool) {
+        bytes32 messageHash = keccak256(abi.encodePacked(
+            bytes(_message),
+            uint256(_targetChain)
+        ));
 
-    // A signature function to cryptographically sign the message to improve the security - TODO
-    function createSignature() internal pure returns(bytes memory) {
-        return "";
-    }
+        bytes32 ethSignedMsgHash = MessageHashUtils.toEthSignedMessageHash(messageHash);        
+        address recoveredSignerAddress = ECDSA.recover(ethSignedMsgHash, _signature);
 
-    function verifySignature() internal pure returns (bool) {
+        require(recoveredSignerAddress == msg.sender, "invalid-signature");
+
         return true;
     }
 
-    function sendMessage(string memory _message, Chains _targetChain) external {
+    function sendMessage(string memory _message, Chains _targetChain, bytes memory _signature) external {
+
+        require(verifySignature(_message, _targetChain,_signature), "invalid-signature");
+
         bytes32 messageId = keccak256(abi.encodePacked(
             msg.sender,
             bytes(_message),
             block.timestamp,
-            nonce
+            nonce,
+            _signature
         ));
-
-        bytes memory _signature = createSignature();
 
         messages[messageId] = Message({
             messageId: messageId,
@@ -108,15 +116,14 @@ contract InterChainEthereumMessenger is Initializable {
     }
 
     function ackMessage(
-        bytes32 messageId
-        // To add more parameters
+        bytes32 messageId,
+        bytes memory _signature
     ) external {
         
         require(messages[messageId].processed == false, "message-id-already-processed");
-        // verify signature in the message from the sender - TODO
+        require(verifySignature(string(messages[messageId].message), messages[messageId].targetChain, _signature), "invalid-signature");
         
         messages[messageId].processed = true;
-        bytes memory _signature = createSignature();
         
         emit InterChainEthereumMessage(
             messageId,
